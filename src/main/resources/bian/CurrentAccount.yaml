@@ -1,0 +1,937 @@
+openapi: 3.0.1
+info:
+  title: Core bancario — Current Account (BIAN)
+  description: |
+    ## Core bancario — Service Domain Current Account
+
+    Cuenta corriente del core, publicada con el estándar BIAN.
+    El Control Record es la cuenta. Los Behavior Qualifiers son depósito,
+    retiro, pago, débito/crédito y bloqueo de monto.
+
+    Tablas del core: `TCUENTA`, `TSALDO`, `TMOVIMIENTO`, `TSALDOHISTORICO`.
+    Solo se listan las operaciones **implementadas**.
+
+    ### Endpoints disponibles
+    | Operación | Método | Objetivo |
+    |---|---|---|
+    | Initiate | POST `/CurrentAccount/Initiate` | Abrir la cuenta corriente y su saldo en cero. |
+    | Retrieve | GET `/CurrentAccount/{id}/Retrieve` | Consultar cuenta y saldos (disponible, contable, bloqueado). |
+    | Update | PUT `/CurrentAccount/{id}/Update` | Cambiar el estado de la cuenta (activa, bloqueada, cerrada). |
+    | DebitandCredit Retrieve | GET `.../DebitandCredit/{id}/Retrieve` | Consultar un movimiento débito/crédito. |
+    | DebitandCredit report | GET `.../DebitandCredit?fromDate=&toDate=` | Estado de cuenta en un rango de fechas. |
+    | Deposit Initiate | POST `.../Deposit/Initiate` | Iniciar depósito (crédito PENDIENTE, sin afectar saldo). |
+    | Deposit Execute | PUT `.../Deposit/{id}/Execute` | Postear depósito (afecta saldo + histórico). |
+    | Deposit Retrieve | GET `.../Deposit/{id}/Retrieve` | Consultar un depósito. |
+    | Withdrawal Initiate | POST `.../Withdrawal/Initiate` | Iniciar retiro (débito PENDIENTE, sin contraparte). |
+    | Withdrawal Execute | PUT `.../Withdrawal/{id}/Execute` | Postear retiro (afecta saldo + histórico). |
+    | Withdrawal Retrieve | GET `.../Withdrawal/{id}/Retrieve` | Consultar un retiro. |
+    | Payment Initiate | POST `.../Payment/Initiate` | Iniciar pago/retiro/transferencia (débito PENDIENTE). |
+    | Payment Execute | PUT `.../Payment/{id}/Execute` | Postear pago (afecta saldo + histórico). |
+    | Payment Retrieve | GET `.../Payment/{id}/Retrieve` | Consultar un pago. |
+    | AmountBlock Initiate | POST `.../AmountBlock/Initiate` | Bloquear monto (disponible → bloqueado). |
+    | AmountBlock Update | PUT `.../AmountBlock/{id}/Update` | Actualizar monto bloqueado absoluto (`IDSALDO`). |
+    | AmountBlock Retrieve | GET `.../AmountBlock/{id}/Retrieve` | Consultar bloqueo / saldo bloqueado. |
+    | AmountBlock Release | PUT `.../AmountBlock/{id}/Release` | Liberar bloqueo (todo o un monto) hacia disponible. |
+
+    ### Flujo típico
+    1. **Initiate** crea el movimiento en estado `PENDIENTE`.
+    2. **Execute** lo postea a `BOOKED` y actualiza saldos.
+    3. La API interna `/api/mantenimiento/movimiento/registrar` usa el mismo motor de ledger.
+  contact:
+    name: Corebank Demo / BIAN
+    url: https://bian.org
+  version: 14.0.0-demo
+servers:
+  - url: /
+    description: Servidor local de la demo Corebank
+tags:
+  - name: CurrentAccountFacility
+    description: |
+      Control Record de la cuenta corriente. Ficha de la cuenta: número, estado,
+      moneda y saldos disponible, contable y bloqueado (TCUENTA, TSALDO).
+  - name: DebitandCredit
+    description: |
+      Behavior Qualifier de débito y crédito. Consulta un movimiento o el estado de cuenta en un rango de fechas.
+  - name: Deposit
+    description: |
+      Behavior Qualifier de depósito. Initiate deja el crédito pendiente; Execute lo contabiliza y mueve el saldo.
+  - name: Withdrawal
+    description: |
+      Behavior Qualifier de retiro. Débito sin contraparte (ventanilla o cajero). Initiate queda pendiente; Execute contabiliza.
+  - name: Payment
+    description: |
+      Behavior Qualifier de pago. Débito con destino (pago o transferencia). Initiate queda pendiente; Execute contabiliza.
+  - name: AmountBlock
+    description: |
+      Behavior Qualifier de bloqueo de monto. Initiate retiene, Update ajusta y Release devuelve fondos al disponible. El saldo contable no cambia.
+paths:
+  /CurrentAccount/Initiate:
+    post:
+      tags:
+        - CurrentAccountFacility
+      summary: Abrir cuenta corriente
+      description: |
+        **Objetivo:** dar de alta el Control Record de la cuenta (`TCUENTA`)
+        y su saldo en cero (`TSALDO`).
+
+        `CustomerReference` es el `idPersona`. Si no se envía número de cuenta, el core lo asigna.
+      operationId: Initiate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentAccountFacility'
+      responses:
+        '200':
+          $ref: '#/components/responses/CurrentAccountFacility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Update':
+    put:
+      tags:
+        - CurrentAccountFacility
+      summary: Actualizar estado de la cuenta
+      description: |
+        **Objetivo:** cambiar el estado de la facilidad.
+
+        `Enabled` → ACTIVA, `Disabled` → BLOQUEADA, `Deleted` → CERRADA.
+      operationId: Update
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentAccountFacility'
+      responses:
+        '200':
+          $ref: '#/components/responses/CurrentAccountFacility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Retrieve':
+    get:
+      tags:
+        - CurrentAccountFacility
+      summary: Consultar cuenta corriente y saldos
+      description: |
+        **Objetivo:** obtener el Control Record de la cuenta (número, estado, moneda)
+        junto con saldos disponible, contable y bloqueado.
+
+        El `currentaccountid` corresponde al `idCuenta` interno.
+      operationId: Retrieve
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+      responses:
+        '200':
+          $ref: '#/components/responses/CurrentAccountFacility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/DebitandCredit/{debitandcreditid}/Retrieve':
+    get:
+      tags:
+        - DebitandCredit
+      summary: Consultar movimiento débito/crédito
+      description: |
+        **Objetivo:** recuperar el detalle de un movimiento (`TMOVIMIENTO`)
+        indicando si es débito o crédito, montos, fechas, contraparte y estado.
+      operationId: RetrieveDebitandCredit
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/debitandcreditid'
+      responses:
+        '200':
+          $ref: '#/components/responses/DebitandCredit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/DebitandCredit':
+    get:
+      tags:
+        - DebitandCredit
+      summary: Estado de cuenta
+      description: |
+        **Objetivo:** listar los débitos y créditos de la cuenta entre `fromDate` y `toDate`
+        (fecha de creación del movimiento, ISO-8601).
+      operationId: RetrieveDebitandCreditReport
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - name: fromDate
+          in: query
+          required: true
+          description: Inicio del rango (ISO-8601, por ejemplo 2026-01-01T00:00:00)
+          schema:
+            type: string
+        - name: toDate
+          in: query
+          required: true
+          description: Fin del rango (ISO-8601, por ejemplo 2026-12-31T23:59:59)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Movimientos del rango
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DebitandCredit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Deposit/Initiate':
+    post:
+      tags:
+        - Deposit
+      summary: Iniciar depósito (crédito pendiente)
+      description: |
+        **Objetivo:** crear un depósito en estado `PENDIENTE` **sin** afectar el saldo.
+
+        Luego debe ejecutarse con `Deposit/Execute` para postearlo.
+      operationId: InitiateDeposit
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Deposit'
+      responses:
+        '200':
+          $ref: '#/components/responses/Deposit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Deposit/{depositid}/Execute':
+    put:
+      tags:
+        - Deposit
+      summary: Ejecutar depósito (afecta saldo)
+      description: |
+        **Objetivo:** postear un depósito pendiente a `BOOKED`,
+        incrementar saldo contable/disponible y registrar histórico.
+      operationId: ExecuteDeposit
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/depositid'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Deposit'
+      responses:
+        '200':
+          $ref: '#/components/responses/Deposit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Deposit/{depositid}/Retrieve':
+    get:
+      tags:
+        - Deposit
+      summary: Consultar depósito
+      description: |
+        **Objetivo:** consultar el estado y detalle de un depósito (crédito)
+        asociado a la cuenta.
+      operationId: RetrieveDeposit
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/depositid'
+      responses:
+        '200':
+          $ref: '#/components/responses/Deposit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Withdrawal/Initiate':
+    post:
+      tags:
+        - Withdrawal
+      summary: Iniciar retiro (débito pendiente)
+      description: |
+        **Objetivo:** crear un retiro de fondos en estado `PENDIENTE` **sin** afectar el saldo.
+        Usa método/transacción de retiro (ventanilla). No incluye contraparte (para transferencias use Payment).
+      operationId: InitiateWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Withdrawal'
+      responses:
+        '200':
+          $ref: '#/components/responses/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Withdrawal/{withdrawalid}/Execute':
+    put:
+      tags:
+        - Withdrawal
+      summary: Ejecutar retiro (afecta saldo)
+      description: |
+        **Objetivo:** postear un retiro pendiente a `BOOKED`,
+        debitar saldo disponible/contable y registrar histórico.
+      operationId: ExecuteWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/withdrawalid'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Withdrawal'
+      responses:
+        '200':
+          $ref: '#/components/responses/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Withdrawal/{withdrawalid}/Retrieve':
+    get:
+      tags:
+        - Withdrawal
+      summary: Consultar retiro
+      description: |
+        **Objetivo:** consultar el estado y detalle de un retiro (débito)
+        asociado a la cuenta.
+      operationId: RetrieveWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/withdrawalid'
+      responses:
+        '200':
+          $ref: '#/components/responses/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Payment/Initiate':
+    post:
+      tags:
+        - Payment
+      summary: Iniciar pago/transferencia (débito pendiente)
+      description: |
+        **Objetivo:** crear un pago o transferencia en estado `PENDIENTE`
+        **sin** afectar el saldo. Si hay contraparte, se trata como transferencia.
+        Para retiros sin contraparte use Withdrawal.
+      operationId: InitiatePayment
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Payment'
+      responses:
+        '200':
+          $ref: '#/components/responses/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Payment/{paymentid}/Execute':
+    put:
+      tags:
+        - Payment
+      summary: Ejecutar pago (afecta saldo)
+      description: |
+        **Objetivo:** postear un pago pendiente a `BOOKED`,
+        debitar saldo disponible/contable y registrar histórico.
+        Si hay cuenta contraparte interna, genera el crédito espejo.
+      operationId: ExecutePayment
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/paymentid'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Payment'
+      responses:
+        '200':
+          $ref: '#/components/responses/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/Payment/{paymentid}/Retrieve':
+    get:
+      tags:
+        - Payment
+      summary: Consultar pago
+      description: |
+        **Objetivo:** consultar el estado y detalle de un pago/débito
+        asociado a la cuenta.
+      operationId: RetrievePayment
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/paymentid'
+      responses:
+        '200':
+          $ref: '#/components/responses/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/AmountBlock/Initiate':
+    post:
+      tags:
+        - AmountBlock
+      summary: Iniciar bloqueo de monto
+      description: |
+        **Objetivo:** retener fondos moviendo monto de `MONTODISPONIBLE`
+        a `MONTOBLOQUEADO` sin cambiar el saldo contable.
+      operationId: InitiateAmountBlock
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountBlock'
+      responses:
+        '200':
+          $ref: '#/components/responses/AmountBlock'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/AmountBlock/{amountblockid}/Update':
+    put:
+      tags:
+        - AmountBlock
+      summary: Actualizar monto bloqueado
+      description: |
+        **Objetivo:** definir el monto bloqueado absoluto y ajustar el disponible.
+        El `amountblockid` corresponde al `IDSALDO` de la cuenta.
+      operationId: UpdateAmountBlock
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/amountblockid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountBlock'
+      responses:
+        '200':
+          $ref: '#/components/responses/AmountBlock'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/AmountBlock/{amountblockid}/Retrieve':
+    get:
+      tags:
+        - AmountBlock
+      summary: Consultar bloqueo de monto
+      description: |
+        **Objetivo:** consultar el monto bloqueado, disponible y contable
+        asociados al saldo de la cuenta (`IDSALDO`).
+      operationId: RetrieveAmountBlock
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/amountblockid'
+      responses:
+        '200':
+          $ref: '#/components/responses/AmountBlock'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/CurrentAccount/{currentaccountid}/AmountBlock/{amountblockid}/Release':
+    put:
+      tags:
+        - AmountBlock
+      summary: Liberar bloqueo de monto
+      description: |
+        **Objetivo:** devolver fondos de `MONTOBLOQUEADO` a `MONTODISPONIBLE`.
+
+        Si `AmountBlockAmount` viene vacío o en cero, se libera todo el bloqueo.
+        El saldo contable no cambia. El `amountblockid` es el `IDSALDO`.
+      operationId: ReleaseAmountBlock
+      parameters:
+        - $ref: '#/components/parameters/currentaccountid'
+        - $ref: '#/components/parameters/amountblockid'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AmountBlock'
+      responses:
+        '200':
+          $ref: '#/components/responses/AmountBlock'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  parameters:
+    currentaccountid:
+      name: currentaccountid
+      in: path
+      required: true
+      description: Identificador interno de la cuenta (`idCuenta`)
+      schema:
+        type: string
+    debitandcreditid:
+      name: debitandcreditid
+      in: path
+      required: true
+      description: Identificador del movimiento (`idMovimiento`)
+      schema:
+        type: string
+    depositid:
+      name: depositid
+      in: path
+      required: true
+      description: Identificador del depósito (`idMovimiento` de crédito)
+      schema:
+        type: string
+    withdrawalid:
+      name: withdrawalid
+      in: path
+      required: true
+      description: Identificador del retiro (`idMovimiento` de débito)
+      schema:
+        type: string
+    paymentid:
+      name: paymentid
+      in: path
+      required: true
+      description: Identificador del pago (`idMovimiento` de débito)
+      schema:
+        type: string
+    amountblockid:
+      name: amountblockid
+      in: path
+      required: true
+      description: Identificador del saldo (`IDSALDO`) asociado al bloqueo
+      schema:
+        type: string
+  schemas:
+    HTTPError:
+      type: object
+      description: Status Attributes
+      properties:
+        status_code:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+    Currencycode:
+      type: object
+      properties:
+        Currencycode:
+          type: string
+          description: ISO-4217 currency code
+    Amount:
+      type: object
+      properties:
+        AmountValue:
+          type: string
+          format: Value
+        AmountCurrency:
+          $ref: '#/components/schemas/Currencycode'
+    Identifier:
+      type: object
+      properties:
+        IdentifierValue:
+          type: string
+    Name:
+      type: object
+      properties:
+        Name:
+          type: string
+    Datetime:
+      type: object
+      properties:
+        DateTimeContent:
+          type: string
+        TimeZoneCode:
+          type: string
+        DateTimeType:
+          type: string
+    Accountidentificationtypevalues:
+      type: string
+      enum:
+        - BBAN
+        - IBAN
+        - AccountNumber
+    Accountidentification:
+      type: object
+      properties:
+        AccountIdentificationType:
+          $ref: '#/components/schemas/Accountidentificationtypevalues'
+        AccountIdentification:
+          $ref: '#/components/schemas/Identifier'
+    Balancetypevalues:
+      type: string
+      enum:
+        - OpeningBalance
+        - ClosingBalance
+        - CurrentBalance
+        - AvailableBalance
+        - LedgerBalance
+        - ReserveBalance
+        - FreeBalance
+        - PrincipalBalance
+    Accountbalance:
+      type: object
+      description: The state of the obligations managed on the account
+      properties:
+        BalanceAmount:
+          $ref: '#/components/schemas/Amount'
+        BalanceType:
+          $ref: '#/components/schemas/Balancetypevalues'
+        BalanceValueDate:
+          $ref: '#/components/schemas/Datetime'
+        BalanceCalculationDate:
+          $ref: '#/components/schemas/Datetime'
+    Currencytypevalues:
+      type: string
+      enum:
+        - BaseCurrency
+        - ReportingCurrency
+    Accountcurrency:
+      type: object
+      properties:
+        AccountCurrencyType:
+          $ref: '#/components/schemas/Currencytypevalues'
+        AccountCurrency:
+          $ref: '#/components/schemas/Currencycode'
+    Accountstatustypevalues:
+      type: string
+      enum:
+        - Enabled
+        - Disabled
+        - Deleted
+        - Proforma
+        - Pending
+    Currentaccounttypevalues:
+      type: string
+      enum:
+        - BusinessCurrentAccount
+        - PersonalCurrentAccount
+        - StandardCurrentAccount
+        - PremiumOrPackagedCurrentAccount
+        - StudentCurrentAccount
+        - YouthCurrentAccount
+        - JointCurrentAccount
+        - SalaryAccount
+        - ForeignCurrencyCurrentAccount
+        - IslamicCurrentAccount
+        - BasicBankAccount
+        - PrivateBankingCurrentAccount
+    Debitcreditindicatorvalues:
+      type: string
+      enum:
+        - Debit
+        - Credit
+    Accountentrystatustypevalues:
+      type: string
+      enum:
+        - Booked
+        - Future
+        - Information
+        - Pending
+    Account:
+      type: object
+      properties:
+        AccountIdentification:
+          $ref: '#/components/schemas/Accountidentification'
+        AccountType:
+          type: string
+        AccountPurpose:
+          type: string
+        AccountBalance:
+          $ref: '#/components/schemas/Accountbalance'
+        AccountCurrency:
+          $ref: '#/components/schemas/Accountcurrency'
+        AccountDescription:
+          type: string
+        AccountName:
+          $ref: '#/components/schemas/Name'
+    CurrentAccountFacility:
+      type: object
+      description: >
+        Fulfill any scheduled and ad-hoc obligations under a service arrangement,
+        most typically for a financial product or facility within Current Account.
+      properties:
+        CurrentAccountNumber:
+          $ref: '#/components/schemas/Accountidentification'
+        CustomerReference:
+          type: string
+          description: Reference to the customer/party owning the account
+        AccountType:
+          $ref: '#/components/schemas/Currentaccounttypevalues'
+        AccountCurrency:
+          $ref: '#/components/schemas/Accountcurrency'
+        AccountDetails:
+          $ref: '#/components/schemas/Account'
+        LimitValue:
+          type: string
+          description: Blocked/reserved amount (demo mapping from MONTOBLOQUEADO)
+        AccountDate:
+          $ref: '#/components/schemas/Datetime'
+        AccountBalance:
+          $ref: '#/components/schemas/Accountbalance'
+        AccountStatus:
+          $ref: '#/components/schemas/Accountstatustypevalues'
+    DebitandCredit:
+      type: object
+      description: Debit or credit transaction against a current account (BQ)
+      properties:
+        TransactionReference:
+          $ref: '#/components/schemas/Identifier'
+        DebitCreditIndicator:
+          $ref: '#/components/schemas/Debitcreditindicatorvalues'
+        TransactionAmount:
+          $ref: '#/components/schemas/Amount'
+        DebitAmount:
+          $ref: '#/components/schemas/Amount'
+        TransactionDescription:
+          type: string
+        TransactionDate:
+          $ref: '#/components/schemas/Datetime'
+        ValueDate:
+          $ref: '#/components/schemas/Datetime'
+        BookingDate:
+          $ref: '#/components/schemas/Datetime'
+        CounterpartyName:
+          type: string
+        CounterpartyAccount:
+          $ref: '#/components/schemas/Accountidentification'
+        CounterpartyBankCode:
+          type: string
+        CounterpartyBankName:
+          type: string
+        ChannelReference:
+          type: string
+        BranchReference:
+          type: string
+        MethodReference:
+          type: string
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+        TrackingCode:
+          type: string
+        RejectionReason:
+          type: string
+    Deposit:
+      type: object
+      description: Deposit behavior qualifier (credit posting)
+      properties:
+        DepositTransactionReference:
+          $ref: '#/components/schemas/Identifier'
+        DepositAmount:
+          $ref: '#/components/schemas/Amount'
+        DepositDescription:
+          type: string
+        DepositDate:
+          $ref: '#/components/schemas/Datetime'
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+    Withdrawal:
+      type: object
+      description: Withdrawal behavior qualifier (cash/debit posting without counterparty)
+      properties:
+        WithdrawalTransactionReference:
+          $ref: '#/components/schemas/Identifier'
+        WithdrawalAmount:
+          $ref: '#/components/schemas/Amount'
+        WithdrawalDescription:
+          type: string
+        WithdrawalDate:
+          $ref: '#/components/schemas/Datetime'
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+    Payment:
+      type: object
+      description: Payment behavior qualifier (debit or transfer posting)
+      properties:
+        PaymentTransactionReference:
+          $ref: '#/components/schemas/Identifier'
+        PaymentAmount:
+          $ref: '#/components/schemas/Amount'
+        PaymentDescription:
+          type: string
+        PaymentDate:
+          $ref: '#/components/schemas/Datetime'
+        CounterpartyName:
+          type: string
+        CounterpartyAccount:
+          $ref: '#/components/schemas/Accountidentification'
+        CounterpartyBankCode:
+          type: string
+        CounterpartyBankName:
+          type: string
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+    AmountBlock:
+      type: object
+      description: Amount block behavior qualifier mapped to TSALDO.MONTOBLOQUEADO
+      properties:
+        AmountBlockReference:
+          $ref: '#/components/schemas/Identifier'
+        AmountBlockAmount:
+          $ref: '#/components/schemas/Amount'
+        AmountBlockType:
+          type: string
+          description: Type of amount block (e.g. Hold, Lien, Reservation)
+        AmountBlockReason:
+          type: string
+        AmountBlockDate:
+          $ref: '#/components/schemas/Datetime'
+        AvailableBalance:
+          $ref: '#/components/schemas/Amount'
+        LedgerBalance:
+          $ref: '#/components/schemas/Amount'
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+  responses:
+    BadRequest:
+      description: BadRequest
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    NotFound:
+      description: NotFound
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    TooManyRequests:
+      description: TooManyRequests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    InternalServerError:
+      description: InternalServerError
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    CurrentAccountFacility:
+      description: CurrentAccountFacility
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CurrentAccountFacility'
+    DebitandCredit:
+      description: DebitandCredit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DebitandCredit'
+    Deposit:
+      description: Deposit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Deposit'
+    Withdrawal:
+      description: Withdrawal
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Withdrawal'
+    Payment:
+      description: Payment
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Payment'
+    AmountBlock:
+      description: AmountBlock
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AmountBlock'
