@@ -1,0 +1,547 @@
+openapi: 3.0.1
+info:
+  title: Core bancario — Savings Account (BIAN)
+  description: |
+    ## Core bancario — Service Domain Savings Account
+
+    Cuenta de ahorros del core (tipo AHO), publicada con el estándar BIAN.
+    El Control Record es la facilidad de cuenta de ahorros (SavingsAccountFacility).
+    Los Behavior Qualifiers implementados son depósito (SavingsDeposit) y retiro (SavingsWithdrawal).
+
+    Tablas del core: `TCUENTA`, `TSALDO`, `TMOVIMIENTO`, `TSALDOHISTORICO`.
+    Solo se listan las operaciones **implementadas**.
+
+    ### Endpoints disponibles
+    | Operación | Método | Objetivo |
+    |---|---|---|
+    | Initiate | POST `/SavingsAccount/Initiate` | Abrir la cuenta de ahorros y su saldo en cero. |
+    | Retrieve | GET `/SavingsAccount/{savingsaccountid}/Retrieve` | Consultar cuenta de ahorros y saldos. |
+    | Update | PUT `/SavingsAccount/{savingsaccountid}/Update` | Cambiar el estado de la cuenta (activa, bloqueada, cerrada). |
+    | Deposit Initiate | POST `.../Deposit/Initiate` | Iniciar depósito (crédito PENDIENTE, sin afectar saldo). |
+    | Deposit Execute | PUT `.../Deposit/{depositid}/Execute` | Postear depósito (afecta saldo + histórico). |
+    | Deposit Retrieve | GET `.../Deposit/{depositid}/Retrieve` | Consultar un depósito. |
+    | Withdrawal Initiate | POST `.../Withdrawal/Initiate` | Iniciar retiro (débito PENDIENTE, sin contraparte). |
+    | Withdrawal Execute | PUT `.../Withdrawal/{withdrawalid}/Execute` | Postear retiro (afecta saldo + histórico). |
+    | Withdrawal Retrieve | GET `.../Withdrawal/{withdrawalid}/Retrieve` | Consultar un retiro. |
+
+    ### Flujo típico
+    1. **Initiate** crea el movimiento en estado `PENDIENTE`.
+    2. **Execute** lo postea a `BOOKED` y actualiza saldos.
+    3. La API interna `/api/mantenimiento/movimiento/registrar` usa el mismo motor de ledger.
+  contact:
+    name: Corebank Demo / BIAN
+    url: https://bian.org
+  version: 14.0.0-demo
+servers:
+  - url: /
+    description: Servidor local de la demo Corebank
+tags:
+  - name: SavingsAccountFacility
+    description: |
+      Control Record de la cuenta de ahorros (tipo AHO). Ficha de la cuenta: número, estado,
+      moneda y saldos disponible, contable y bloqueado (TCUENTA, TSALDO).
+  - name: SavingsDeposit
+    description: |
+      Behavior Qualifier de depósito de ahorros. Initiate deja el crédito pendiente; Execute lo contabiliza y mueve el saldo.
+  - name: SavingsWithdrawal
+    description: |
+      Behavior Qualifier de retiro de ahorros. Débito sin contraparte (ventanilla o cajero). Initiate queda pendiente; Execute contabiliza.
+paths:
+  /SavingsAccount/Initiate:
+    post:
+      tags:
+        - SavingsAccountFacility
+      summary: Abrir cuenta de ahorros
+      description: |
+        **Objetivo:** dar de alta el Control Record de la cuenta (`TCUENTA`)
+        y su saldo en cero (`TSALDO`) para una cuenta de ahorros (tipo `AHO`).
+
+        `CustomerReference` es el `idPersona`. Si no se envía número de cuenta, el core asigna uno que inicia con 11.
+      operationId: InitiateSavings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavingsAccountFacility'
+      responses:
+        '200':
+          $ref: '#/components/responses/SavingsAccountFacility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Update':
+    put:
+      tags:
+        - SavingsAccountFacility
+      summary: Actualizar estado de la cuenta de ahorros
+      description: |
+        **Objetivo:** cambiar el estado de la facilidad de ahorros.
+
+        `Enabled` → ACTIVA, `Disabled` → BLOQUEADA, `Deleted` → CERRADA.
+      operationId: UpdateSavings
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavingsAccountFacility'
+      responses:
+        '200':
+          $ref: '#/components/responses/SavingsAccountFacility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Retrieve':
+    get:
+      tags:
+        - SavingsAccountFacility
+      summary: Consultar cuenta de ahorros y saldos
+      description: |
+        **Objetivo:** obtener el Control Record de la cuenta de ahorros (número, estado, moneda)
+        junto con saldos disponible, contable y bloqueado.
+
+        El `savingsaccountid` corresponde al `idCuenta` interno.
+      operationId: RetrieveSavings
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+      responses:
+        '200':
+          $ref: '#/components/responses/SavingsAccountFacility'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Deposit/Initiate':
+    post:
+      tags:
+        - SavingsDeposit
+      summary: Iniciar depósito en cuenta de ahorros (crédito pendiente)
+      description: |
+        **Objetivo:** crear un depósito en cuenta de ahorros en estado `PENDIENTE` **sin** afectar el saldo.
+
+        Luego debe ejecutarse con `Deposit/{depositid}/Execute` para postearlo.
+      operationId: InitiateSavingsDeposit
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Deposit'
+      responses:
+        '200':
+          $ref: '#/components/responses/Deposit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Deposit/{depositid}/Execute':
+    put:
+      tags:
+        - SavingsDeposit
+      summary: Ejecutar depósito en cuenta de ahorros (afecta saldo)
+      description: |
+        **Objetivo:** postear un depósito pendiente de ahorros a `BOOKED`,
+        incrementar saldo contable/disponible y registrar histórico.
+      operationId: ExecuteSavingsDeposit
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+        - $ref: '#/components/parameters/depositid'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Deposit'
+      responses:
+        '200':
+          $ref: '#/components/responses/Deposit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Deposit/{depositid}/Retrieve':
+    get:
+      tags:
+        - SavingsDeposit
+      summary: Consultar depósito en cuenta de ahorros
+      description: |
+        **Objetivo:** consultar el estado y detalle de un depósito (crédito)
+        asociado a la cuenta de ahorros.
+      operationId: RetrieveSavingsDeposit
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+        - $ref: '#/components/parameters/depositid'
+      responses:
+        '200':
+          $ref: '#/components/responses/Deposit'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Withdrawal/Initiate':
+    post:
+      tags:
+        - SavingsWithdrawal
+      summary: Iniciar retiro en cuenta de ahorros (débito pendiente)
+      description: |
+        **Objetivo:** crear un retiro de fondos en cuenta de ahorros en estado `PENDIENTE` **sin** afectar el saldo.
+        Usa método/transacción de retiro (ventanilla).
+      operationId: InitiateSavingsWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Withdrawal'
+      responses:
+        '200':
+          $ref: '#/components/responses/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Withdrawal/{withdrawalid}/Execute':
+    put:
+      tags:
+        - SavingsWithdrawal
+      summary: Ejecutar retiro en cuenta de ahorros (afecta saldo)
+      description: |
+        **Objetivo:** postear un retiro pendiente de ahorros a `BOOKED`,
+        debitar saldo disponible/contable y registrar histórico.
+      operationId: ExecuteSavingsWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+        - $ref: '#/components/parameters/withdrawalid'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Withdrawal'
+      responses:
+        '200':
+          $ref: '#/components/responses/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  '/SavingsAccount/{savingsaccountid}/Withdrawal/{withdrawalid}/Retrieve':
+    get:
+      tags:
+        - SavingsWithdrawal
+      summary: Consultar retiro en cuenta de ahorros
+      description: |
+        **Objetivo:** consultar el estado y detalle de un retiro (débito)
+        asociado a la cuenta de ahorros.
+      operationId: RetrieveSavingsWithdrawal
+      parameters:
+        - $ref: '#/components/parameters/savingsaccountid'
+        - $ref: '#/components/parameters/withdrawalid'
+      responses:
+        '200':
+          $ref: '#/components/responses/Withdrawal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  parameters:
+    savingsaccountid:
+      name: savingsaccountid
+      in: path
+      required: true
+      description: Identificador interno de la cuenta de ahorros (`idCuenta`)
+      schema:
+        type: string
+    depositid:
+      name: depositid
+      in: path
+      required: true
+      description: Identificador del depósito (`idMovimiento` de crédito)
+      schema:
+        type: string
+    withdrawalid:
+      name: withdrawalid
+      in: path
+      required: true
+      description: Identificador del retiro (`idMovimiento` de débito)
+      schema:
+        type: string
+  schemas:
+    HTTPError:
+      type: object
+      description: Status Attributes
+      properties:
+        status_code:
+          type: string
+        status:
+          type: string
+        message:
+          type: string
+    Currencycode:
+      type: object
+      properties:
+        Currencycode:
+          type: string
+          description: ISO-4217 currency code
+    Amount:
+      type: object
+      properties:
+        AmountValue:
+          type: string
+          format: Value
+        AmountCurrency:
+          $ref: '#/components/schemas/Currencycode'
+    Identifier:
+      type: object
+      properties:
+        IdentifierValue:
+          type: string
+    Name:
+      type: object
+      properties:
+        Name:
+          type: string
+    Datetime:
+      type: object
+      properties:
+        DateTimeContent:
+          type: string
+        TimeZoneCode:
+          type: string
+        DateTimeType:
+          type: string
+    Accountidentificationtypevalues:
+      type: string
+      enum:
+        - BBAN
+        - IBAN
+        - AccountNumber
+    Accountidentification:
+      type: object
+      properties:
+        AccountIdentificationType:
+          $ref: '#/components/schemas/Accountidentificationtypevalues'
+        AccountIdentification:
+          $ref: '#/components/schemas/Identifier'
+    Balancetypevalues:
+      type: string
+      enum:
+        - OpeningBalance
+        - ClosingBalance
+        - CurrentBalance
+        - AvailableBalance
+        - LedgerBalance
+        - ReserveBalance
+        - FreeBalance
+        - PrincipalBalance
+    Accountbalance:
+      type: object
+      description: The state of the obligations managed on the account
+      properties:
+        BalanceAmount:
+          $ref: '#/components/schemas/Amount'
+        BalanceType:
+          $ref: '#/components/schemas/Balancetypevalues'
+        BalanceValueDate:
+          $ref: '#/components/schemas/Datetime'
+        BalanceCalculationDate:
+          $ref: '#/components/schemas/Datetime'
+    Currencytypevalues:
+      type: string
+      enum:
+        - BaseCurrency
+        - ReportingCurrency
+    Accountcurrency:
+      type: object
+      properties:
+        AccountCurrencyType:
+          $ref: '#/components/schemas/Currencytypevalues'
+        AccountCurrency:
+          $ref: '#/components/schemas/Currencycode'
+    Accountstatustypevalues:
+      type: string
+      enum:
+        - Enabled
+        - Disabled
+        - Deleted
+        - Proforma
+        - Pending
+    Savingsaccounttypevalues:
+      type: string
+      enum:
+        - SavingsAccount
+        - RegularSavingsAccount
+        - StandardSavingsAccount
+        - PersonalSavingsAccount
+    Debitcreditindicatorvalues:
+      type: string
+      enum:
+        - Debit
+        - Credit
+    Accountentrystatustypevalues:
+      type: string
+      enum:
+        - Booked
+        - Future
+        - Information
+        - Pending
+    Account:
+      type: object
+      properties:
+        AccountIdentification:
+          $ref: '#/components/schemas/Accountidentification'
+        AccountType:
+          type: string
+        AccountPurpose:
+          type: string
+        AccountBalance:
+          $ref: '#/components/schemas/Accountbalance'
+        AccountCurrency:
+          $ref: '#/components/schemas/Accountcurrency'
+        AccountDescription:
+          type: string
+        AccountName:
+          $ref: '#/components/schemas/Name'
+    SavingsAccountFacility:
+      type: object
+      description: >
+        Fulfill any scheduled and ad-hoc obligations under a service arrangement,
+        most typically for a financial product or facility within Savings Account.
+      properties:
+        SavingsAccountNumber:
+          $ref: '#/components/schemas/Accountidentification'
+        CurrentAccountNumber:
+          $ref: '#/components/schemas/Accountidentification'
+        CustomerReference:
+          type: string
+          description: Reference to the customer/party owning the account
+        AccountType:
+          $ref: '#/components/schemas/Savingsaccounttypevalues'
+        AccountCurrency:
+          $ref: '#/components/schemas/Accountcurrency'
+        AccountDetails:
+          $ref: '#/components/schemas/Account'
+        LimitValue:
+          type: string
+          description: Blocked/reserved amount (demo mapping from MONTOBLOQUEADO)
+        AccountDate:
+          $ref: '#/components/schemas/Datetime'
+        AccountBalance:
+          $ref: '#/components/schemas/Accountbalance'
+        AccountStatus:
+          $ref: '#/components/schemas/Accountstatustypevalues'
+    Deposit:
+      type: object
+      description: Deposit behavior qualifier (credit posting)
+      properties:
+        DepositTransactionReference:
+          $ref: '#/components/schemas/Identifier'
+        DepositAmount:
+          $ref: '#/components/schemas/Amount'
+        DepositDescription:
+          type: string
+        DepositDate:
+          $ref: '#/components/schemas/Datetime'
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+    Withdrawal:
+      type: object
+      description: Withdrawal behavior qualifier (cash/debit posting without counterparty)
+      properties:
+        WithdrawalTransactionReference:
+          $ref: '#/components/schemas/Identifier'
+        WithdrawalAmount:
+          $ref: '#/components/schemas/Amount'
+        WithdrawalDescription:
+          type: string
+        WithdrawalDate:
+          $ref: '#/components/schemas/Datetime'
+        Status:
+          $ref: '#/components/schemas/Accountentrystatustypevalues'
+        Message:
+          type: string
+  responses:
+    BadRequest:
+      description: BadRequest
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    NotFound:
+      description: NotFound
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    TooManyRequests:
+      description: TooManyRequests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    InternalServerError:
+      description: InternalServerError
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HTTPError'
+    SavingsAccountFacility:
+      description: SavingsAccountFacility
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SavingsAccountFacility'
+    Deposit:
+      description: Deposit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Deposit'
+    Withdrawal:
+      description: Withdrawal
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Withdrawal'

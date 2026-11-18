@@ -177,6 +177,28 @@
 							</configOptions>
 						</configuration>
 					</execution>
+					<execution>
+						<id>generate-savings-account</id>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+							<inputSpec>${project.basedir}/src/main/resources/bian/SavingsAccount.yaml</inputSpec>
+							<generatorName>spring</generatorName>
+							<apiPackage>com.ithink.bian.savingsaccount.api</apiPackage>
+							<modelPackage>com.ithink.bian.savingsaccount.model</modelPackage>
+							<output>${project.build.directory}/generated-sources/openapi-savings-account</output>
+							<addCompileSourceRoot>true</addCompileSourceRoot>
+							<configOptions>
+								<interfaceOnly>true</interfaceOnly>
+								<useTags>true</useTags>
+								<useSpringBoot3>true</useSpringBoot3>
+								<openApiNullable>false</openApiNullable>
+								<useBeanValidation>false</useBeanValidation>
+								<sourceFolder>src/main/java</sourceFolder>
+							</configOptions>
+						</configuration>
+					</execution>
 				</executions>
 			</plugin>
 			<!-- Expone fuentes OpenAPI al IDE (Withdrawal, Deposit, etc.) -->
@@ -194,6 +216,7 @@
 							<sources>
 								<source>${project.build.directory}/generated-sources/openapi-party/src/main/java</source>
 								<source>${project.build.directory}/generated-sources/openapi-current-account/src/main/java</source>
+								<source>${project.build.directory}/generated-sources/openapi-savings-account/src/main/java</source>
 							</sources>
 						</configuration>
 					</execution>
