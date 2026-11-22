@@ -27,7 +27,7 @@ class ControllerSmokeTest {
 
         assertEquals(HttpStatus.OK, response.getStatusCode());
         assertEquals("1", response.getBody().get("code"));
-        assertEquals("Transacción OK", response.getBody().get("message"));
+        assertEquals("Transaccion OK", response.getBody().get("message"));
         assertNotNull(response.getBody().get("data"));
     }
 
