@@ -1,0 +1,93 @@
+name: CI/CD - Core BIAN
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # necesario para el login OIDC con Azure
+  contents: read
+
+# Evita dos despliegues simultáneos (bloquearían el estado de Terraform)
+concurrency:
+  group: deploy-core-bian
+  cancel-in-progress: false
+
+env:
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  TF_VAR_sufijo: ${{ vars.SUFIJO }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  build-test:
+    name: Compilar y probar
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Maven verify
+        run: mvn -B verify
+
+  deploy:
+    name: Desplegar en Azure
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login en Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init
+
+      # 1) Primero solo el grupo de recursos y el registro, para poder subir la imagen.
+      #    La Container App necesita que la imagen ya exista. Tras la primera
+      #    ejecución, este paso no cambia nada.
+      - name: Crear grupo de recursos y registro
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve -target=azurerm_container_registry.acr
+
+      # 2) Construir y subir la imagen con el SHA del commit como etiqueta.
+      - name: Construir y subir la imagen
+        env:
+          SUFIJO: ${{ vars.SUFIJO }}
+        run: |
+          ACR_NAME="acrcorebian${SUFIJO}"
+          ACR_USER=$(az acr credential show -n "$ACR_NAME" --query username -o tsv)
+          ACR_PASS=$(az acr credential show -n "$ACR_NAME" --query "passwords[0].value" -o tsv)
+          echo "::add-mask::$ACR_PASS"
+          echo "$ACR_PASS" | docker login "$ACR_NAME.azurecr.io" -u "$ACR_USER" --password-stdin
+          docker build -t "$ACR_NAME.azurecr.io/core-bian:${GITHUB_SHA}" .
+          docker push "$ACR_NAME.azurecr.io/core-bian:${GITHUB_SHA}"
+
+      # 3) Aplicar todo, con la imagen nueva: crea o actualiza la Container App.
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve -var="image_tag=${GITHUB_SHA}"
+
+      - name: Mostrar la URL
+        working-directory: infra/terraform
+        run: |
+          echo "### Despliegue listo" >> "$GITHUB_STEP_SUMMARY"
+          echo "URL: $(terraform output -raw app_url)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rama: ${GITHUB_REF_NAME} - Commit: ${GITHUB_SHA}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,58 @@
+name: Destruir infraestructura (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: "Escribe DESTRUIR para confirmar"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-core-bian
+  cancel-in-progress: false
+
+env:
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  TF_VAR_sufijo: ${{ vars.SUFIJO }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  destroy:
+    name: Terraform destroy
+    # Solo se ejecuta si escribiste exactamente DESTRUIR
+    if: ${{ inputs.confirmar == 'DESTRUIR' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login en Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: Terraform destroy
+        working-directory: infra/terraform
+        run: terraform destroy -auto-approve
+
+      - name: Resumen
+        run: |
+          echo "### Infraestructura destruida" >> "$GITHUB_STEP_SUMMARY"
+          echo "Comprueba en el portal que solo queden rg-tfstate y NetworkWatcherRG." >> "$GITHUB_STEP_SUMMARY"
