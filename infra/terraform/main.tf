@@ -38,6 +38,12 @@ resource "azurerm_container_app_environment" "env" {
   location                   = azurerm_resource_group.rg.location
   log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
   tags                       = local.tags
+
+  # Un entorno sano tarda pocos minutos; si se atasca, falla antes.
+  timeouts {
+    create = "15m"
+    delete = "20m"
+  }
 }
 
 resource "azurerm_container_app" "app" {
