@@ -1,0 +1,11 @@
+{
+  "name": "corebank-code-review-gate",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.4.2"
+  }
+}

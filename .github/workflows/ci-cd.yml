@@ -37,9 +37,50 @@ jobs:
       - name: Maven verify
         run: mvn -B verify
 
+  # Agente Cursor: solo nomenclatura / convenciones sobre el diff del commit.
+  # Si responde VERDICT: FAIL, corta el pipeline y no despliega.
+  code-review:
+    name: Revisar nomenclatura (agente)
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ci/code-review/package-lock.json
+
+      - name: Instalar Cursor SDK
+        working-directory: ci/code-review
+        run: npm install
+
+      - name: Revisar diff del commit
+        working-directory: ci/code-review
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+          REVIEW_HEAD: ${{ github.sha }}
+          REVIEW_BASE: ${{ github.event.before }}
+        run: node review.mjs
+
+      - name: Publicar informe del agente
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-review-report
+          path: ci/code-review/out/review-output.md
+          if-no-files-found: ignore
+
   deploy:
     name: Desplegar en Azure
-    needs: build-test
+    needs:
+      - build-test
+      - code-review
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

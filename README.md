@@ -39,3 +39,14 @@ mvn test
 ```
 
 Incluye tests de arquitectura (ArchUnit) que congelan las reglas de dependencia.
+
+## CI / despliegue
+
+El workflow `.github/workflows/ci-cd.yml` en `master` hace:
+
+1. `mvn verify`
+2. **Revisión por agente Cursor** (nomenclatura estilo SonarQube solo del diff)
+3. Deploy a Azure (solo si el agente responde `VERDICT: PASS`)
+
+Secret obligatorio: `CURSOR_API_KEY` (Dashboard de Cursor → Integrations).
+Detalle: [ci/code-review/README.md](ci/code-review/README.md).
