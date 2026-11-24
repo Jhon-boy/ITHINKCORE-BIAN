@@ -48,5 +48,6 @@ El workflow `.github/workflows/ci-cd.yml` en `master` hace:
 2. **Revisión por agente Cursor** (nomenclatura estilo SonarQube solo del diff)
 3. Deploy a Azure (solo si el agente responde `VERDICT: PASS`)
 
-Secret obligatorio: `CURSOR_API_KEY` (Dashboard de Cursor → Integrations).
+Secret obligatorio: `CURSOR_API_KEY` (Dashboard de Cursor → API Keys).
+El gate usa la Cloud Agents API por HTTP (sin Node/SDK).
 Detalle: [ci/code-review/README.md](ci/code-review/README.md).

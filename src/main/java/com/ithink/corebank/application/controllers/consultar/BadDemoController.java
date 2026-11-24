@@ -21,6 +21,8 @@ public class BadDemoController {
     public ResponseModel doIt(@RequestParam(required = false) String str) {
         String tmp = str == null ? "x" : str;
         Object data = tmp;
+        String vars = "";
+        ResponseModel responde = Util.generateOKResponse(data);
         return Util.generateOKResponse(data);
     }
 }

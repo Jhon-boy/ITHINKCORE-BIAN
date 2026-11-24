@@ -32,6 +32,6 @@ build/
 ### VS Code ###
 .vscode/
 
-### Code review gate (Cursor SDK) ###
-ci/code-review/node_modules/
+### Code review gate ###
 ci/code-review/out/
+ci/code-review/node_modules/

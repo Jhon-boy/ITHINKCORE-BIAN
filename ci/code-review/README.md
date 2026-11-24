@@ -1,42 +1,35 @@
 # Gate de revisión por agente (CI)
 
-Job de GitHub Actions que usa el **Cursor SDK** para revisar nomenclatura
-(clases, métodos, variables, parámetros, paquetes) al estilo SonarQube
-**solo sobre el diff del commit**. Si el veredicto es `FAIL`, el pipeline
-no despliega.
+Job de GitHub Actions que usa la **Cloud Agents API** de Cursor (HTTP)
+para revisar nomenclatura estilo SonarQube **solo sobre el diff del commit**.
+
+Misma `CURSOR_API_KEY`. **Sin Node, sin SDK, sin `node_modules`.**
+
+Si el veredicto es `FAIL`, el pipeline no despliega.
 
 ## Secret requerido
 
-En el repositorio de GitHub:
-
-**Settings → Secrets and variables → Actions → New repository secret**
+En GitHub: **Settings → Secrets and variables → Actions**
 
 | Name | Valor |
 |------|--------|
-| `CURSOR_API_KEY` | API key de Cursor (Dashboard → Integrations) o service account del team |
-
-Sin este secret el job `code-review` falla y corta el deploy.
+| `CURSOR_API_KEY` | API key de [Cursor Dashboard → API Keys](https://cursor.com/dashboard) |
 
 ## Cómo corre
 
-1. `build-test` (Maven verify + ArchUnit)
-2. `code-review` (agente Cursor sobre el diff Java/Kotlin)
-3. `deploy` (solo si los dos anteriores pasan)
-
-Rama: la definida en `.github/workflows/ci-cd.yml` (hoy `master`).
+1. `build-test` (Maven verify + ArchUnit) — esto es lo que más tarda por Java
+2. `code-review` — `python3 review.py` llama `POST https://api.cursor.com/v1/agents` (agente **sin repo**: solo prompt + diff)
+3. `deploy` — solo si el agente responde `VERDICT: PASS`
 
 ## Prueba local
 
-Requiere Node.js **22.13+**.
-
 ```bash
 cd ci/code-review
-npm install
-export CURSOR_API_KEY=cursor_...
+export CURSOR_API_KEY=crsr_...
 # opcional: REVIEW_BASE y REVIEW_HEAD (SHAs)
-node review.mjs
+python3 review.py
 ```
 
 ## Instrucciones del agente
 
-Edita `INSTRUCTIONS.md` para ajustar reglas de nombrado sin tocar el workflow.
+Edita `INSTRUCTIONS.md` para ajustar reglas de nombrado.
