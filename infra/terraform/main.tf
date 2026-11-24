@@ -41,7 +41,7 @@ resource "azurerm_container_app_environment" "env" {
 
   # Un entorno sano tarda pocos minutos; si se atasca, falla antes.
   timeouts {
-    create = "15m"
+    create = "45m"
     delete = "20m"
   }
 }
